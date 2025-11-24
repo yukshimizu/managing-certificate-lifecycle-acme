@@ -1,0 +1,31 @@
+version: 3
+
+build_arg_defaults:
+  ANSIBLE_GALAXY_CLI_COLLECTION_OPTS: '-pre'
+
+images:
+  base_image:
+    name: 'registry.redhat.io/ansible-automation-platform-26/ee-supported-rhel9:latest'
+
+dependencies:
+  system:
+    - gcc
+    - systemd-devel
+    - pkgconfig
+    - libxml2-devel
+    - python3.11-devel
+  python:
+    - boto3
+    - hvac==2.4.0
+    - cryptography==44.0.1
+    - dnspython==2.7.0
+  galaxy:
+    collections:
+      - name: amazon.aws
+      - name: community.crypto
+        version: 2.24.0
+      - name: community.dns
+        version: 3.1.2
+      - name: community.hashi_vault
+        version: 6.2.0
+      - name: f5networks.f5_modules

@@ -1,0 +1,106 @@
+- name: Upload ACME certificate to Vault
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    aws_region: "{{ lookup('env', 'AWS_DEFAULT_REGION') }}"
+    dns_zone: "{{ domain_name.split('.')[1] }}.{{ domain_name.split('.')[2] }}"
+
+  tasks:
+    - name: Fail if variables not defined
+      ansible.builtin.assert:
+        that:
+          - aws_region is defined
+          - domain_name is defined
+          - files_loc is defined
+          - cert_path is defined
+          - le_private_key is defined
+          - csr_private_key is defined
+          - vault_addr is defined
+          - vault_token is defined
+          - vault_mount is defined
+          - vault_cert_path is defined
+        fail_msg: "Required variables not set"
+
+    - name: Check if KV mount exists
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/sys/mounts/{{ vault_mount }}/"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ vault_token }}"
+          X-Vault-Namespace: "{{ vault_namespace }}"
+        return_content: false
+        status_code: [200, 400, 404]
+        validate_certs: false
+      register: mount_check
+
+    - name: Enable KV v2 secrets engine
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/sys/mounts/{{ vault_mount }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ vault_token }}"
+          X-Vault-Namespace: "{{ vault_namespace }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          type: "kv"
+          description: "Certificates & keys (KV v2)"
+          options:
+            version: "2"         # <-- makes it KV v2
+        status_code: 204
+        validate_certs: false
+      when: mount_check.status == 400
+
+    - name: Upload cert + key to HCP Vault
+      community.hashi_vault.vault_write:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_token }}"
+        username: root
+        path: "{{ vault_mount }}/data/{{ vault_cert_path }}"
+        data:
+          data:
+            fullchain_pem: "{{ lookup('file', './cert-store/' + vault_cert_path + '/' + domain_name + '-fullchain.crt') }}"
+            intermediate_pem: "{{ lookup('file', './cert-store/' + vault_cert_path + '/' + domain_name + '-intermediate.crt') }}"
+            leaf_pem: "{{ lookup('file', './cert-store/' + vault_cert_path + '/' + domain_name + '.crt') }}"
+            privkey_pem: "{{ lookup('file', './cert-store/' + vault_cert_path + '/' + domain_name + '.key') }}"
+            uploaded_at: "{{ ansible_date_time.iso8601 }}"
+        validate_certs: false
+      register: vault_upload
+
+    - name: Show vault upload info
+      ansible.builtin.debug:
+        msg: "Cert & key uploaded to Vault path: {{ vault_cert_path }} (versioned automatically)"
+
+    - name: Get cert + key from HCP vault
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_token }}"
+        engine_mount_point: "{{ vault_mount }}"
+        path: "{{ vault_cert_path }}"
+        username: root
+        validate_certs: false
+      register: response
+
+    - name: Display the results
+      ansible.builtin.debug:
+        msg:
+          - "Fullchain: {{ response.secret.fullchain_pem }}"
+          - "Intermediate: {{ response.secret.intermediate_pem }}"
+          - "Leaf: {{ response.secret.leaf_pem }}"
+          - "Private Key: {{ response.secret.privkey_pem }}"
+
+    - name: Get information on the current certificate
+      community.crypto.x509_certificate_info:
+        content: "{{ response.secret.fullchain_pem }}"
+      register: result
+
+    - name: Dump information
+      ansible.builtin.debug:
+        msg:
+          - "Issuer: {{ result.issuer }}"
+          - "Serial Number: {{ result.serial_number }}"
+          - "Subject Common Name: {{ result.subject.commonName }}"
+          - "Issued Date: {{ result.not_before | to_datetime('%Y%m%d%H%M%SZ') }}"
+          - "Expire Date: {{ result.not_after | to_datetime('%Y%m%d%H%M%SZ') }}"
+          - "Expired: {{ result.expired }}"

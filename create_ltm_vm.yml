@@ -1,0 +1,137 @@
+---
+- name: Create a Ltm VM
+  hosts: localhost
+  gather_facts: false
+  vars:
+    aws_region: "{{ lookup('env', 'AWS_DEFAULT_REGION') }}"
+
+  vars_prompt:
+    - name: aws_keypair_name
+      prompt: "Enter your AWS keypair name?"
+      private: false
+
+  tasks:
+    - name: Fail if variables not defined
+      ansible.builtin.assert:
+        that:
+          - aws_region is defined
+          - aws_vpc_subnet_name is defined
+          - aws_securitygroup_name is defined
+          - aws_keypair_name is defined
+          - aws_ltm_instance_ami is defined
+          - aws_ltm_instance_size is defined
+          - ltm_vm_name is defined
+          - ltm_vm_type is defined
+          - purpose is defined
+        fail_msg: "Required variables not set"
+
+    - name: Check if the VM is already provisioned
+      amazon.aws.ec2_instance_info:
+        filters:
+          "tag:Name": "{{ ltm_vm_name }}"
+          "tag:type": "{{ ltm_vm_type }}"
+          "tag:purpose": "{{ purpose }}"
+          instance-state-name:
+            - pending
+            - running
+            - shutting-down
+            - stopping
+            - stopped
+        region: "{{ aws_region }}"
+      register: existing_vm
+
+    - name: Output the IP of existing VM
+      ansible.builtin.debug:
+        msg:
+          - "The ltm instance looks like already provisioned. Please check the instance."
+          - "Private IP for the instance: {{ existing_vm.instances[0].private_ip_address }}"
+      when: existing_vm.instances is defined and existing_vm.instances | length > 0
+
+    - name: Create Instance
+      when: existing_vm.instances | length == 0
+      block:
+        - name: Get subnet info
+          amazon.aws.ec2_vpc_subnet_info:
+            region: "{{ aws_region }}"
+            filters:
+              "tag:Name": "{{ aws_vpc_subnet_name }}"
+          register: aws_subnet
+          when: aws_subnet_id is not defined
+
+        - name: Save subnet id
+          ansible.builtin.set_fact:
+            aws_subnet_id: "{{ aws_subnet.subnets | map(attribute='id') | list | last }}"
+          when: aws_subnet_id is not defined
+
+        - name: Create the instance
+          amazon.aws.ec2_instance:
+            network:
+              assign_public_ip: true
+              delete_on_termination: true
+            key_name: "{{ aws_keypair_name }}"
+            instance_type: "{{ aws_ltm_instance_size }}"
+            image_id: "{{ aws_ltm_instance_ami }}"
+            region: "{{ aws_region }}"
+            security_group: "{{ aws_securitygroup_name }}"
+            tags:
+              Name: "{{ ltm_vm_name }}"
+              type: "{{ ltm_vm_type }}"
+              purpose: "{{ purpose }}"
+            volumes:
+              - device_name: /dev/xvda
+                ebs:
+                  volume_size: 41
+                  delete_on_termination: true
+            wait: true
+            vpc_subnet_id: "{{ aws_subnet_id }}"
+          register: aws_ec2_instance
+
+        - name: Output the IP of new VM
+          ansible.builtin.debug:
+            msg:
+              - "Public IP for new instance: {{ aws_ec2_instance.instances[0].public_ip_address | default('') }}"
+              - "Private IP for new instance: {{ aws_ec2_instance.instances[0].private_ip_address | default('') }}"
+          when: aws_ec2_instance.instances is defined and aws_ec2_instance.instances | length > 0
+
+        - name: Wait for EC2 instance to be ready
+          ansible.builtin.wait_for:
+            delay: 60
+            host: "{{ aws_ec2_instance.instances[0].public_dns_name }}"
+            port: 22
+            state: started
+            timeout: 300
+          when: aws_ec2_instance.instances is defined and aws_ec2_instance.instances | length > 0
+
+        - name: Add the instance to the ltm group
+          ansible.builtin.add_host:
+            name: "{{ aws_ec2_instance.instances[0].public_dns_name }}"
+            groups: ltm
+          when: aws_ec2_instance.instances is defined and aws_ec2_instance.instances | length > 0
+
+        - name: Set private_dns_name
+          ansible.builtin.set_fact:
+            public_dns_name: "{{ aws_ec2_instance.instances[0].public_dns_name }}"
+          when: aws_ec2_instance.instances is defined and aws_ec2_instance.instances | length > 0
+
+- name: Configure Ltm server
+  hosts: ltm
+  gather_facts: false
+  remote_user: admin
+
+  vars_prompt:
+    - name: ltm_passwd
+      prompt: "What is your BIG-IP password?"
+
+  tasks:
+    - name: Wait 300 seconds for port 22 to become open
+      ansible.builtin.wait_for:
+        port: 22
+        host: "{{ inventory_hostname }}"
+        delay: 30
+        timeout: 300
+      delegate_to: localhost
+
+    - name: Set the initial password with raw tmsh
+      no_log: true
+      ansible.builtin.raw: |
+        modify auth user admin password {{ ltm_passwd }}; save sys config

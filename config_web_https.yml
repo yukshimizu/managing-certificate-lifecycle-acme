@@ -1,0 +1,164 @@
+- name: Configure Web (https) server
+  hosts: tag_Name_web02
+  become: true
+  gather_facts: true
+
+  vars_prompt:
+    - name: vault_token
+      prompt: "Enter your Vault token?"
+
+  tasks:
+    - name: Fail if variables not defined
+      ansible.builtin.assert:
+        that:
+          - vault_addr is defined
+          - vault_token is defined
+          - vault_mount is defined
+          - vault_cert_path is defined
+          - domain_name is defined
+        fail_msg: "Required variables not set"
+
+    - name: Create directory for certs directory
+      ansible.builtin.file:
+        path: "{{ cert_path }}"
+        state: directory
+        recurse: true
+        mode: "0755"
+
+    - name: Get cert + key from HCP vault
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_token }}"
+        engine_mount_point: "{{ vault_mount }}"
+        path: "{{ vault_cert_path }}"
+        username: root
+        validate_certs: false
+      delegate_to: localhost
+      register: vault_data
+
+    - name: Display the results
+      ansible.builtin.debug:
+        msg:
+          - "Fullchain: {{ vault_data.secret.fullchain_pem }}"
+          - "Private Key: {{ vault_data.secret.privkey_pem }}"
+      delegate_to: loalhost
+
+    - name: Copy new cert to web server
+      ansible.builtin.copy:
+        content: "{{ vault_data.secret.fullchain_pem }}"
+        dest: "{{ cert_path }}/{{ domain_name }}-fullchain.crt"
+        owner: nginx
+        group: nginx
+        mode: "0600"
+
+    - name: Copy key to web server
+      ansible.builtin.copy:
+        content: "{{ vault_data.secret.privkey_pem }}"
+        dest: "{{ cert_path }}/{{ domain_name }}.key"
+        owner: nginx
+        group: nginx
+        mode: "0600"
+
+    - name: Configure Nginx for HTTPS
+      ansible.builtin.copy:
+        dest: /etc/nginx/nginx.conf
+        backup: true
+        content: |
+          # For more information on configuration, see:
+          #   * Official English Documentation: http://nginx.org/en/docs/
+          #   * Official Russian Documentation: http://nginx.org/ru/docs/
+
+          user nginx;
+          worker_processes auto;
+          error_log /var/log/nginx/error.log;
+          pid /run/nginx.pid;
+
+          # Load dynamic modules. See /usr/share/doc/nginx/README.dynamic.
+          include /usr/share/nginx/modules/*.conf;
+
+          events {
+              worker_connections 1024;
+          }
+
+          http {
+              log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                                '$status $body_bytes_sent "$http_referer" '
+                                '"$http_user_agent" "$http_x_forwarded_for"';
+
+              access_log  /var/log/nginx/access.log  main;
+
+              sendfile            on;
+              tcp_nopush          on;
+              tcp_nodelay         on;
+              keepalive_timeout   65;
+              types_hash_max_size 4096;
+
+              include             /etc/nginx/mime.types;
+              default_type        application/octet-stream;
+
+              # Load modular configuration files from the /etc/nginx/conf.d directory.
+              # See http://nginx.org/en/docs/ngx_core_module.html#include
+              # for more information.
+              include /etc/nginx/conf.d/*.conf;
+
+              server {
+                  listen       80;
+                  listen       [::]:80;
+                  server_name {{ domain_name }};
+                  root         /usr/share/nginx/html;
+
+                  # Load configuration files for the default server block.
+                  include /etc/nginx/default.d/*.conf;
+
+                  error_page 404 /404.html;
+                  location = /404.html {
+                  }
+
+                  error_page 500 502 503 504 /50x.html;
+                  location = /50x.html {
+                  }
+              }
+
+          # Settings for a TLS enabled server.
+          #
+              server {
+                  listen       443 ssl http2;
+                  listen       [::]:443 ssl http2;
+                  server_name {{ domain_name }};
+                  root         /usr/share/nginx/html;
+          #
+                  ssl_certificate {{ cert_path }}/{{ domain_name }}-fullchain.crt;
+                  ssl_certificate_key {{ cert_path }}/{{ domain_name }}.key;
+                  ssl_session_cache shared:SSL:1m;
+                  ssl_session_timeout  10m;
+                  ssl_ciphers PROFILE=SYSTEM;
+                  ssl_prefer_server_ciphers on;
+          #
+          #        # Load configuration files for the default server block.
+                  include /etc/nginx/default.d/*.conf;
+          #
+                  error_page 404 /404.html;
+                      location = /40x.html {
+                  }
+
+                  error_page 500 502 503 504 /50x.html;
+                      location = /50x.html {
+                  }
+              }
+
+          }
+        mode: "0644"
+      notify: Restart nginx
+
+    - name: Create demo index page
+      ansible.builtin.copy:
+        dest: /usr/share/nginx/html/index.html
+        content: |
+          <html><h1>Hello from HTTPS - {{ domain_name }}</h1></html>
+        mode: "0644"
+
+  handlers:
+    - name: Restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted

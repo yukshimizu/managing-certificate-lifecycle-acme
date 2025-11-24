@@ -1,0 +1,49 @@
+---
+aws_vpc: acme_demo_vpc
+aws_vpc_cidr_block: 10.2.0.0/16 # adjust with your preference
+aws_vpc_subnet_name: acme_demo_subnet
+aws_subnet_cidr_block: 10.2.1.0/24 # adjust with your preference
+aws_igw_name: acme_demo_gtw
+aws_routetable_name: acme_demo_rtb
+aws_securitygroup_name: acme_demo_sg
+
+purpose: acme_demo
+
+aws_aap_instance_ami: ami-041b7189cc3449f92 # ami of RHEL-9.6.0_HVM-20250910-x86_64-0-Hourly2-GP3
+aws_aap_instance_size: t2.xlarge # should not be modified
+aws_web_instance_ami: ami-0a7a80a58efb329f5 # ami of CentOS-Stream-9-20250604.1.x86_64-aba856bc-78bf-441c-b25c-980bec33a53f
+aws_web_instance_size: t2.micro
+aws_vault_instance_ami: ami-0a7a80a58efb329f5 # ami of CentOS-Stream-9-20250604.1.x86_64-aba856bc-78bf-441c-b25c-980bec33a53f
+aws_vault_instance_size: t2.micro
+aws_ltm_instance_ami: ami-0510f3d853d460f2d # F5 BIGIP-21.0.0-0.0.10 PAYG-Good 25Mbps-251104071341-8e1217d4-a046-4cdf-894e-e38175bae37f
+aws_ltm_instance_size: m5.xlarge # should not be modified
+aws_eip_name: acme_demo
+
+aap_vm_type: aap # should not be modified
+aap_vm_name: aap01
+web_vm_type: web # should not be modified
+web_vm_name: web01
+vault_vm_type: vault # should not be modified
+vault_vm_name: vault01
+ltm_vm_type: ltm # should not be modified
+ltm_vm_name: ltm01
+eip_instance_name: "{{ ltm_vm_name }}"
+
+domain_name: "www.yourdomain.net" # adjust with your domain
+country_name: "JP" # adjust with your preference
+organization_name: "yourorg" # adjust with your preference
+organizational_unit_name: "Dev" # adjust with your preference
+
+acme_email: "admin@{{ domain_name }}" # adjust with your preference
+acme_directory: "https://acme-v02.api.letsencrypt.org/directory" # adjust with your preference
+
+files_loc: ./cert-store # adjust with your preference
+le_private_key: "{{ files_loc }}/le-account.key" # adjust with your preference
+csr_private_key: "{{ files_loc }}/{{ domain_name }}/{{ domain_name }}.key" # adjust with your preference
+cert_remaining_days: 30
+
+vault_addr: "https://vault.yourdomain.net:8200" # your vault URI
+vault_token: "hvs.hogehogehoge" # token for your vault
+vault_namespace: "admin"
+vault_mount: "cert-store" # adjust with your preference
+vault_cert_path: "{{ domain_name }}"

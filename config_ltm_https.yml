@@ -1,0 +1,169 @@
+- name: Configure BIG-IP for website
+  hosts: localhost
+  gather_facts: false
+  vars:
+    ltm_public_dns_name: "{{ domain_name }}"
+
+  vars_prompt:
+    - name: vault_token
+      prompt: "Enter your Vault token?"
+    - name: ltm_passwd
+      prompt: "What is your BIG-IP password?"
+    - name: ltm_pool_host_ip
+      prompt: "What is private IP of pool host (Web)?"
+      private: false
+
+  tasks:
+    - name: Fail if variables not defined
+      ansible.builtin.assert:
+        that:
+          - vault_addr is defined
+          - vault_token is defined
+          - vault_mount is defined
+          - vault_cert_path is defined
+          - domain_name is defined
+          - ltm_passwd is defined
+          - ltm_pool_host_ip is defined
+        fail_msg: "Required variables not set"
+
+    - name: Get cert + key from HCP vault
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_token }}"
+        engine_mount_point: "{{ vault_mount }}"
+        path: "{{ vault_cert_path }}"
+        username: root
+        validate_certs: false
+      register: vault_data
+
+    - name: Display the results
+      ansible.builtin.debug:
+        msg:
+          - "Intermediate: {{ vault_data.secret.intermediate_pem }}"
+          - "Leaf: {{ vault_data.secret.leaf_pem }}"
+          - "Private Key: {{ vault_data.secret.privkey_pem }}"
+
+    - name: Upload leaf cert + key to BIG-IP
+      f5networks.f5_modules.bigip_ssl_key_cert:
+        key_name: "{{ domain_name }}_key"
+        key_content: "{{ vault_data.secret.privkey_pem }}"
+        cert_name: "{{ domain_name }}_cert"
+        cert_content: "{{ vault_data.secret.leaf_pem }}"
+        state: present
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false
+
+    - name: Upload chain cert to BIG-IP
+      f5networks.f5_modules.bigip_ssl_certificate:
+        name: "{{ domain_name }}_chain"
+        content: "{{ vault_data.secret.intermediate_pem }}"
+        state: present
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false
+
+    - name: Create a client SSL profile
+      f5networks.f5_modules.bigip_profile_client_ssl:
+        name: "clientssl_{{ domain_name }}"
+        cert_key_chain:
+          - cert: "{{ domain_name }}_cert"
+            key: "{{ domain_name }}_key"
+            chain: "{{ domain_name }}_chain"
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false
+
+    - name: Create a HTTP profile with XFF
+      f5networks.f5_modules.bigip_profile_http:
+        name: http_xff
+        insert_xforwarded_for: true
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false
+
+    - name: Create a pool
+      f5networks.f5_modules.bigip_pool:
+        state: present
+        name: web_pool
+        monitors: http
+        monitor_type: and_list
+        lb_method: round-robin
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false
+
+    - name: Add pool members
+      f5networks.f5_modules.bigip_pool_member:
+        state: present
+        pool: web_pool
+        address: "{{ ltm_pool_host_ip }}"
+        port: 80
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false
+
+    - name: Create iRule for HTTPS hygiene
+      f5networks.f5_modules.bigip_irule:
+        name: ir_https_sanity
+        module: ltm
+        content: |
+          when HTTP_REQUEST {
+            HTTP::header replace X-Forwarded-Proto "https"
+            HTTP::header replace X-Forwarded-Host  [HTTP::host]
+          }
+          when HTTP_RESPONSE {
+            if { [HTTP::is_redirect] && [string tolower [HTTP::header value Location]] starts_with "http://" } {
+              set loc [HTTP::header value Location]
+              regsub -nocase {^http://} $loc "https://" loc_https
+              HTTP::header replace Location $loc_https
+            }
+            HTTP::header insert Content-Security-Policy "upgrade-insecure-requests"
+            # HTTP::header insert Strict-Transport-Security "max-age=31536000; includeSubDomains"
+          }
+        state: present
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false
+
+    - name: HTTPS virtual server
+      f5networks.f5_modules.bigip_virtual_server:
+        name: vs_https
+        address_translation: true
+        port_translation: true
+        destination: 0.0.0.0
+        port: 443
+        pool: web_pool
+        profiles:
+          - "http_xff"
+          - "clientssl_{{ domain_name }}"
+        irules:
+          - "ir_https_sanity"
+        snat: Automap
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false

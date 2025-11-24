@@ -1,0 +1,192 @@
+- name: Renew ACME certificate and store it in Vault
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    dns_zone: "{{ domain_name.split('.')[1] }}.{{ domain_name.split('.')[2] }}"
+    vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+    le_private_key_content: "{{ lookup('env', 'LE_PRIVATE_KEY') | b64decode }}"
+
+  tasks:
+    - name: Fail if variables not defined
+      ansible.builtin.assert:
+        that:
+          - domain_name is defined
+          - country_name is defined
+          - organization_name is defined
+          - organizational_unit_name is defined
+          - acme_email is defined
+          - acme_directory is defined
+          - files_loc is defined
+          - le_private_key_content is defined
+          - csr_private_key is defined
+          - vault_addr is defined
+          - vault_token is defined
+          - vault_mount is defined
+          - vault_cert_path is defined
+        fail_msg: "Required variables not set"
+
+    - name: Create directory for certs directory
+      ansible.builtin.file:
+        path: "{{ files_loc }}/{{ domain_name }}"
+        state: directory
+        mode: "0700"
+
+    - name: Generate CSR private key
+      community.crypto.openssl_privatekey:
+        path: "{{ csr_private_key }}"
+        state: present
+
+    - name: Make sure account exists and has given contacts. We agree to TOS.
+      community.crypto.acme_account:
+        validate_certs: false
+        account_key_content: "{{ le_private_key_content }}"
+        state: present
+        terms_agreed: true
+        acme_version: 2
+        acme_directory: "{{ acme_directory }}"
+        contact:
+          - "mailto:nomail@{{ dns_zone }}"
+
+    - name: Generate an OpenSSL Certificate Signing Request
+      community.crypto.openssl_csr:
+        path: "{{ files_loc }}/{{ domain_name }}/{{ domain_name }}.csr"
+        privatekey_path: "{{ csr_private_key }}"
+        common_name: "{{ domain_name }}"
+        country_name: "{{ country_name }}"
+        organization_name: "{{ organization_name }}"
+        organizational_unit_name: "{{ organizational_unit_name }}"
+
+    - name: Create a challenge using the account key file
+      community.crypto.acme_certificate:
+        validate_certs: false
+        account_key_content: "{{ le_private_key_content }}"
+        account_email: "{{ acme_email }}"
+        acme_version: 2
+        csr: "{{ files_loc }}/{{ domain_name }}/{{ domain_name }}.csr"
+        dest: "{{ files_loc }}/{{ domain_name }}/{{ domain_name }}.crt"
+        challenge: dns-01
+        acme_directory: "{{ acme_directory }}"
+        remaining_days: "{{ cert_remaining_days }}"
+        terms_agreed: true
+        include_renewal_cert_id: when_ari_supported
+        force: true
+      register: acme_challenge
+
+    - name: Debug
+      ansible.builtin.debug:
+        msg: "{{ acme_challenge }}"
+
+    - name: Get TXT record for the challenge
+      ansible.builtin.set_fact:
+        record: "{{ acme_challenge.challenge_data[domain_name]['dns-01'].record }}"
+      when: acme_challenge.challenge_data is defined and domain_name in acme_challenge.challenge_data and 'dns-01' in acme_challenge.challenge_data[domain_name]
+
+    - name: Get value of the TXT record
+      ansible.builtin.set_fact:
+        record_value: "{{ acme_challenge.challenge_data[domain_name]['dns-01'].resource_value }}"
+      when: acme_challenge.challenge_data is defined and domain_name in acme_challenge.challenge_data and 'dns-01' in acme_challenge.challenge_data[domain_name]
+
+    - name: Update the AWS route53 DNS TXT record
+      amazon.aws.route53:
+        command: present
+        zone: "{{ dns_zone }}"
+        record: "{{ record }}"
+        type: TXT
+        ttl: 300
+        value: '"{{ record_value }}"'
+        overwrite: true
+      when: acme_challenge.challenge_data is defined and domain_name in acme_challenge.challenge_data and 'dns-01' in acme_challenge.challenge_data[domain_name]
+
+    - name: Wait for TXT entry to appear
+      community.dns.wait_for_txt:
+        records:
+          - name: "{{ record }}"
+            values: "{{ record_value }}"
+            mode: equals
+        always_ask_default_resolver: false
+        timeout: 120
+      when: acme_challenge.challenge_data is defined and domain_name in acme_challenge.challenge_data and 'dns-01' in acme_challenge.challenge_data[domain_name]
+
+    - name: Retrieve the cert and intermediate certificate
+      community.crypto.acme_certificate:
+        validate_certs: false
+        account_key_content: "{{ le_private_key_content | replace('\\n', '\n') }}"
+        account_email: "{{ acme_email }}"
+        csr: "{{ files_loc }}/{{ domain_name }}/{{ domain_name }}.csr"
+        dest: "{{ files_loc }}/{{ domain_name }}/{{ domain_name }}.crt"
+        fullchain_dest: "{{ files_loc }}/{{ domain_name }}/{{ domain_name }}-fullchain.crt"
+        chain: "{{ files_loc }}/{{ domain_name }}/{{ domain_name }}-intermediate.crt"
+        challenge: dns-01
+        remaining_days: "{{ cert_remaining_days }}"
+        data: "{{ acme_challenge }}"
+        acme_directory: "{{ acme_directory }}"
+        acme_version: 2
+        force: true
+        terms_agreed: true
+      when: acme_challenge is changed
+      register: lsresult
+      until: "lsresult is not failed"
+      retries: 12
+      delay: 10
+
+    - name: Clean up Route 53 TXT record
+      amazon.aws.route53:
+        state: absent
+        zone: "{{ dns_zone }}"
+        record: "{{ record }}"
+        type: TXT
+      when: acme_challenge.challenge_data is defined and domain_name in acme_challenge.challenge_data and 'dns-01' in acme_challenge.challenge_data[domain_name]
+
+    - name: Upload cert + key to HCP Vault
+      community.hashi_vault.vault_write:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_token }}"
+        username: root
+        path: "{{ vault_mount }}/data/{{ vault_cert_path }}"
+        data:
+          data:
+            fullchain_pem: "{{ lookup('file', './cert-store/' + vault_cert_path + '/' + domain_name + '-fullchain.crt') }}"
+            intermediate_pem: "{{ lookup('file', './cert-store/' + vault_cert_path + '/' + domain_name + '-intermediate.crt') }}"
+            leaf_pem: "{{ lookup('file', './cert-store/' + vault_cert_path + '/' + domain_name + '.crt') }}"
+            privkey_pem: "{{ lookup('file', './cert-store/' + vault_cert_path + '/' + domain_name + '.key') }}"
+            uploaded_at: "{{ ansible_date_time.iso8601 }}"
+        validate_certs: false
+      register: vault_upload
+
+    - name: Show vault upload info
+      ansible.builtin.debug:
+        msg: "Cert & key uploaded to Vault path: {{ vault_cert_path }} (versioned automatically)"
+
+    - name: Get cert + key from HCP vault
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_token }}"
+        engine_mount_point: "{{ vault_mount }}"
+        path: "{{ vault_cert_path }}"
+        username: root
+        validate_certs: false
+      register: response
+
+    - name: Display the results
+      ansible.builtin.debug:
+        msg:
+          - "Fullchain: {{ response.secret.fullchain_pem }}"
+          - "Intermediate: {{ response.secret.intermediate_pem }}"
+          - "Leaf: {{ response.secret.leaf_pem }}"
+          - "Private Key: {{ response.secret.privkey_pem }}"
+
+    - name: Get information on the current certificate
+      community.crypto.x509_certificate_info:
+        content: "{{ response.secret.fullchain_pem }}"
+      register: result
+
+    - name: Dump information
+      ansible.builtin.debug:
+        msg:
+          - "Issuer: {{ result.issuer }}"
+          - "Serial Number: {{ result.serial_number }}"
+          - "Subject Common Name: {{ result.subject.commonName }}"
+          - "Issued Date: {{ result.not_before | to_datetime('%Y%m%d%H%M%SZ') }}"
+          - "Expire Date: {{ result.not_after | to_datetime('%Y%m%d%H%M%SZ') }}"
+          - "Expired: {{ result.expired }}"

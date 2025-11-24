@@ -1,0 +1,4 @@
+boto3
+hvac==2.4.0
+cryptography==44.0.1
+dnspython==2.7.0

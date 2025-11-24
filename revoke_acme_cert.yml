@@ -1,0 +1,62 @@
+- name: Revoke ACME certificate
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    aws_region: "{{ lookup('env', 'AWS_DEFAULT_REGION') }}"
+    dns_zone: "{{ domain_name.split('.')[1] }}.{{ domain_name.split('.')[2] }}"
+
+  tasks:
+    - name: Fail if variables not defined
+      ansible.builtin.assert:
+        that:
+          - aws_region is defined
+          - domain_name is defined
+          - acme_directory is defined
+          - files_loc is defined
+          - cert_path is defined
+          - le_private_key is defined
+          - csr_private_key is defined
+          - vault_addr is defined
+          - vault_token is defined
+          - vault_mount is defined
+          - vault_cert_path is defined
+        fail_msg: "Required variables not set"
+
+    - name: Make sure account exists and has given contacts. We agree to TOS.
+      community.crypto.acme_account:
+        validate_certs: false
+        account_key_src: "{{ le_private_key }}"
+        state: present
+        terms_agreed: true
+        acme_version: 2
+        acme_directory: "{{ acme_directory }}"
+        contact:
+          - "mailto:nomail@{{ dns_zone }}"
+
+    - name: Revoke the certificate using the account key file
+      community.crypto.acme_certificate_revoke:
+        validate_certs: false
+        account_key_src: "{{ le_private_key }}"
+        acme_version: 2
+        certificate: "{{ files_loc }}/{{ domain_name }}/{{ domain_name }}.crt"
+        acme_directory: "{{ acme_directory }}"
+      register: acme_response
+
+    - name: Debug
+      ansible.builtin.debug:
+        msg: "{{ acme_response }}"
+
+    - name: Delete cert + key from HCP vault
+      community.hashi_vault.vault_kv2_delete:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_token }}"
+        engine_mount_point: "{{ vault_mount }}"
+        path: "{{ vault_cert_path }}"
+        username: root
+        validate_certs: false
+      register: response
+
+    - name: Display the results
+      ansible.builtin.debug:
+        msg: "{{ response }}"

@@ -1,0 +1,69 @@
+- name: Check ACME certificate in Vault
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+
+  tasks:
+    - name: Fail if variables not defined
+      ansible.builtin.assert:
+        that:
+          - vault_addr is defined
+          - vault_token is defined
+          - vault_mount is defined
+          - vault_cert_path is defined
+          - acme_directory is defined
+          - cert_remaining_days is defined
+        fail_msg: "Required variables not set"
+
+    - name: Get cert + key from HCP vault
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_token }}"
+        engine_mount_point: "{{ vault_mount }}"
+        path: "{{ vault_cert_path }}"
+        username: root
+        validate_certs: false
+      register: response
+
+    - name: Display the results
+      ansible.builtin.debug:
+        msg:
+          - "Fullchain: {{ response.secret.fullchain_pem }}"
+          - "Intermediate: {{ response.secret.intermediate_pem }}"
+          - "Leaf: {{ response.secret.leaf_pem }}"
+          - "Private Key: {{ response.secret.privkey_pem }}"
+
+    - name: Get information on the current certificate
+      community.crypto.x509_certificate_info:
+        content: "{{ response.secret.fullchain_pem }}"
+      register: result
+
+    - name: Dump information
+      ansible.builtin.debug:
+        msg:
+          - "Issuer: {{ result.issuer }}"
+          - "Serial Number: {{ result.serial_number }}"
+          - "Subject Common Name: {{ result.subject.commonName }}"
+          - "Issued Date: {{ result.not_before | to_datetime('%Y%m%d%H%M%SZ') }}"
+          - "Expire Date: {{ result.not_after | to_datetime('%Y%m%d%H%M%SZ') }}"
+          - "Expired: {{ result.expired }}"
+
+    - name: Retrieve renewal information for a certificate
+      community.crypto.acme_certificate_renewal_info:
+        certificate_content: "{{ response.secret.fullchain_pem }}"
+        acme_version: 2
+        acme_directory: "{{ acme_directory }}"
+        remaining_days: "{{ cert_remaining_days }}"
+      register: cert_data
+
+    - name: Should the certificate be renewed?
+      ansible.builtin.debug:
+        var: cert_data.should_renew
+      register: renewal_response
+
+    - name: Fail if should_renew is false
+      ansible.builtin.fail:
+        msg: The certifiation does not require renewal.
+      when: not cert_data.should_renew

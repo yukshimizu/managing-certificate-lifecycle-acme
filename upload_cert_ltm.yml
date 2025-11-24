@@ -1,0 +1,76 @@
+- name: Upload certificate from Vault to BIG-IP
+  hosts: localhost
+  gather_facts: false
+  vars:
+    ltm_public_dns_name: "{{ domain_name }}"
+    ltm_passwd: "{{ lookup('env', 'LTM_PASSWD') }}"
+    vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+
+  tasks:
+    - name: Fail if variables not defined
+      ansible.builtin.assert:
+        that:
+          - vault_addr is defined
+          - vault_token is defined
+          - vault_mount is defined
+          - vault_cert_path is defined
+          - domain_name is defined
+          - ltm_passwd is defined
+        fail_msg: "Required variables not set"
+
+    - name: Get cert + key from HCP vault
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ vault_addr }}"
+        token: "{{ vault_token }}"
+        engine_mount_point: "{{ vault_mount }}"
+        path: "{{ vault_cert_path }}"
+        username: root
+        validate_certs: false
+      register: vault_data
+
+    - name: Display the results
+      ansible.builtin.debug:
+        msg:
+          - "Intermediate: {{ vault_data.secret.intermediate_pem }}"
+          - "Leaf: {{ vault_data.secret.leaf_pem }}"
+          - "Private Key: {{ vault_data.secret.privkey_pem }}"
+
+    - name: Upload leaf cert + key to BIG-IP
+      f5networks.f5_modules.bigip_ssl_key_cert:
+        key_name: "{{ domain_name }}_key"
+        key_content: "{{ vault_data.secret.privkey_pem }}"
+        cert_name: "{{ domain_name }}_cert"
+        cert_content: "{{ vault_data.secret.leaf_pem }}"
+        state: present
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false
+
+    - name: Upload chain cert to BIG-IP
+      f5networks.f5_modules.bigip_ssl_certificate:
+        name: "{{ domain_name }}_chain"
+        content: "{{ vault_data.secret.intermediate_pem }}"
+        state: present
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false
+
+    - name: Ensure the client SSL profile exists
+      f5networks.f5_modules.bigip_profile_client_ssl:
+        name: "clientssl_{{ domain_name }}"
+        cert_key_chain:
+          - cert: "{{ domain_name }}_cert"
+            key: "{{ domain_name }}_key"
+            chain: "{{ domain_name }}_chain"
+        provider:
+          server: "{{ ltm_public_dns_name }}"
+          user: admin
+          password: "{{ ltm_passwd }}"
+          server_port: 8443
+          validate_certs: false

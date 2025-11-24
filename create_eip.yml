@@ -1,0 +1,123 @@
+---
+- name: Create an EIP and allocate to a specific instance
+  hosts: localhost
+  gather_facts: false
+  tags: ec2
+  vars:
+    aws_region: "{{ lookup('env', 'AWS_DEFAULT_REGION') }}"
+    dns_zone: "{{ domain_name.split('.')[1] }}.{{ domain_name.split('.')[2] }}"
+    allow_reassoc: true
+
+  tasks:
+    - name: Fail if variables not defined
+      ansible.builtin.assert:
+        that:
+          - aws_region is defined
+          - aws_vpc_subnet_name is defined
+          - aws_securitygroup_name is defined
+          - aws_eip_name is defined
+          - purpose is defined
+          - eip_instance_name is defined
+          - allow_reassoc is defined
+        fail_msg: "Required variables not set"
+
+    - name: Look up instance by Name tag (skip if instance_id already provided)
+      when: instance_id is not defined
+      amazon.aws.ec2_instance_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:Name": "{{ eip_instance_name }}"
+          instance-state-name:
+            - pending
+            - running
+            - shutting-down
+            - stopping
+            - stopped
+      register: ec2_info
+
+    - name: Validate instance was found
+      when: instance_id is not defined
+      ansible.builtin.assert:
+        that:
+          - ec2_info.instances | length > 0
+        fail_msg: "EC2 instance with Name '{{ eip_instance_name }}' not found in {{ aws_region }}."
+
+    - name: Set instance_id fact (from lookup)
+      when: instance_id is not defined
+      ansible.builtin.set_fact:
+        instance_id: "{{ ec2_info.instances[0].instance_id }}"
+
+    - name: Check if an EIP with our Name tag already exists
+      amazon.aws.ec2_eip_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:Name": "{{ aws_eip_name }}"
+      register: eip_lookup
+
+    - name: Debug
+      ansible.builtin.debug:
+        msg: "{{ eip_lookup }}"
+
+    - name: Decide whether we will reuse an existing EIP
+      ansible.builtin.set_fact:
+        existing_allocation_id: "{{ eip_lookup.addresses[0].allocation_id }}"
+      when: eip_lookup.addresses | length > 0
+
+    - name: Hold an existing EIP
+      ansible.builtin.set_fact:
+        existing_public_ip: "{{ eip_lookup.addresses[0].public_ip }}"
+      when: eip_lookup.addresses | length > 0
+
+    - name: Allocate a new EIP (VPC scope) if none exists
+      when: existing_allocation_id is not defined
+      amazon.aws.ec2_eip:
+        region: "{{ aws_region }}"
+        state: present
+        # For VPC, domain defaults to 'vpc' in modern collections; explicit is fine too:
+        # domain: vpc
+      register: new_eip
+
+    - name: Set allocation_id to either existing or newly created
+      ansible.builtin.set_fact:
+        allocation_id: >-
+          {{ existing_allocation_id | default(new_eip.allocation_id) }}
+
+    - name: Set public_ip to either existing or newly created
+      ansible.builtin.set_fact:
+        public_ip: >-
+          {{ existing_public_ip | default(new_eip.public_ip) }}
+
+    - name: Tag the EIP with a friendly Name
+      amazon.aws.ec2_tag:
+        region: "{{ aws_region }}"
+        resource: "{{ allocation_id }}"
+        state: present
+        tags:
+          Name: "{{ aws_eip_name }}"
+
+    - name: Associate the EIP to the instance (re-associate if needed)
+      amazon.aws.ec2_eip:
+        region: "{{ aws_region }}"
+        state: present
+        public_ip: "{{ public_ip }}"
+        device_id: "{{ instance_id }}"
+        allow_reassociation: "{{ allow_reassoc }}"
+      register: assoc
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg:
+          - "EIP public_ip: {{ assoc.public_ip | default(new_eip.public_ip, true) }}"
+          - "EIP allocation_id: {{ allocation_id }}"
+          - "Associated to instance_id: {{ instance_id }}"
+
+    - name: Create an A record with the IP and wait until the changes have been replicated
+      amazon.aws.route53:
+        state: present
+        zone: "{{ dns_zone }}"
+        record: "{{ domain_name }}"
+        type: A
+        ttl: 7200
+        value: "{{ public_ip }}"
+        wait: true
+      when: allocation_id is defined and public_ip | length > 0

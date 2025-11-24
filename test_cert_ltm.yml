@@ -1,0 +1,29 @@
+- name: Test the web page access
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Fail if variables not defined
+      ansible.builtin.assert:
+        that:
+          - domain_name is defined
+        fail_msg: "Required variables not set"
+
+    - name: GET the default page
+      ansible.builtin.uri:
+        url: "https://{{ domain_name }}/"
+        method: GET
+        status_code: 200
+        return_content: true
+        validate_certs: true
+      register: default_page
+
+    - name: Check for the page
+      ansible.builtin.fail:
+        msg: "Site Check Failed - could not access default page"
+      when: default_page.content is not search(domain_name)
+
+    - name: Test results
+      ansible.builtin.debug:
+        msg: "All tests succeeded."
