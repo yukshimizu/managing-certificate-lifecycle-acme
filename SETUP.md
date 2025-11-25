@@ -257,12 +257,12 @@ Once you run the playbook, you can find the generated key files and cert files u
 $ tree cert-store
 cert-store
 ├── le-account.key
-└── www.demo24.net
-    ├── www.demo24.net-fullchain.crt
-    ├── www.demo24.net-intermediate.crt
-    ├── www.demo24.net.crt
-    ├── www.demo24.net.csr
-    └── www.demo24.net.key
+└── www.yourdomain.net
+    ├── www.yourdomain.net-fullchain.crt
+    ├── www.yourdomain.net-intermediate.crt
+    ├── www.yourdomain.net.crt
+    ├── www.yourdomain.net.csr
+    └── www.yourdomain.net.key
 
 $ base64 -i le-account.key -o le-account.key.b64
 ```
