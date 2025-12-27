@@ -351,7 +351,7 @@ eip_instance_name: "{{ ltm_vm_name }}"
 ```
 This playbook need to be run at the last of set up.
 ```
-$ ansible-playbook create_networks.yml
+$ ansible-playbook create_eip.yml
 ```
 
 ### Clean up the environment
