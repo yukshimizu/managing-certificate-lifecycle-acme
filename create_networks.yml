@@ -94,24 +94,12 @@
             to_port: 8000
             cidr_ip: 0.0.0.0/0
           - proto: tcp
-            from_port: 8140
-            to_port: 8140
-            cidr_ip: 0.0.0.0/0
-          - proto: tcp
             from_port: 8443
             to_port: 8443
             cidr_ip: 0.0.0.0/0
           - proto: tcp
             from_port: 8201
             to_port: 8201
-            cidr_ip: 0.0.0.0/0
-          - proto: tcp
-            from_port: 9000
-            to_port: 9000
-            cidr_ip: 0.0.0.0/0
-          - proto: tcp
-            from_port: 27199
-            to_port: 27199
             cidr_ip: 0.0.0.0/0
         rules_egress:
           - proto: all
