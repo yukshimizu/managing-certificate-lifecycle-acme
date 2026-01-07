@@ -1,4 +1,4 @@
-Role Name
+aap
 =========
 
 This role "aap" is designed to create an Ansible Automation Platform on AWS EC2 for demo purpose.
