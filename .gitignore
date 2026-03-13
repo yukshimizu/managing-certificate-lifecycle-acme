@@ -5,4 +5,8 @@
 .ansible/
 
 # Others
+.bak/
+.vscode/
+.venv/
 cert-store/
+roles/

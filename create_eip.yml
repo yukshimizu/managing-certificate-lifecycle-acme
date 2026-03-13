@@ -119,5 +119,6 @@
         type: A
         ttl: 7200
         value: "{{ public_ip }}"
+        overwrite: true
         wait: true
       when: allocation_id is defined and public_ip | length > 0

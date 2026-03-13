@@ -1,0 +1,76 @@
+---
+- name: Check TLS certificates and generate markdown report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    warn_days: 200
+    critical_days: 30
+    sites:
+      - www.demo24.net
+      - www.google.com
+      - www.yahoo.co.jp
+      - github.com
+      - expired.badssl.com
+
+  tasks:
+    - name: Get certificates
+      community.crypto.get_certificate:
+        host: "{{ item }}"
+        port: 443
+        asn1_base64: true
+      loop: "{{ sites }}"
+      loop_control:
+        label: "{{ item }}"
+      register: cert_results
+
+    - name: Build report rows
+      ansible.builtin.set_fact:
+        report_rows: "{{ (report_rows | default([])) + [ {
+          'domain': item.item,
+          'expires_at': '%Y-%m-%d %H:%M:%S GMT+9' | strftime((expires_epoch | int) + 32400),
+          'days_left': days_left,
+          'emoji': (
+            '☠️'
+            if (days_left | int) <= 0
+            else (
+              '🚨'
+              if (days_left | int) <= critical_days
+              else (
+                '⚠️'
+                if (days_left | int) <= warn_days
+                else '🟢'
+              )
+            )
+          )
+          } ] }}"
+      vars:
+        expires_epoch: "{{ (item.not_after | to_datetime('%Y%m%d%H%M%SZ')).strftime('%s') | int }}"
+        days_left: >-
+          {{
+            (
+              (
+                (item.not_after | to_datetime('%Y%m%d%H%M%SZ'))
+                - (now(utc=true, fmt='%Y-%m-%d %H:%M:%S') | to_datetime('%Y-%m-%d %H:%M:%S'))
+              ).total_seconds() // 86400
+            ) | int
+          }}
+      loop: "{{ cert_results.results }}"
+
+    - name: Generate markdown report
+      ansible.builtin.copy:
+        dest: "{{ playbook_dir }}/tls_report.md"
+        mode: "0644"
+        content: |
+          # TLS Certificate Report (Sample)
+
+          Created At: {{ '%Y-%m-%d %H:%M:%S GMT+9' | strftime((now(utc=true, fmt='%s') | int) + 32400) }}
+          
+          Legend: 🟢 `> {{ warn_days }} days` / ⚠️ `{{ critical_days + 1 }}-{{ warn_days }} days` / 🚨 `1-{{ critical_days }} days` / ☠️ `<= 0 days`
+
+          | Domain | Expiration (GMT+9) | Days Left | Status |
+          |---|---|---:|:---:|
+          {% for row in report_rows %}
+          | {{ row.domain }} | {{ row.expires_at }} | {{ row.days_left }} | {{ row.emoji }} |
+          {% endfor %}
