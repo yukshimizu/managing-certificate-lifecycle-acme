@@ -341,7 +341,7 @@ Follow the next steps for creating an integrated workflow. Please refer to [Ansi
 1. Click `Templates` in the left menu.
 2. Click `Create template` button and select `Create workflow job template`.
 3. Enter the following fields.
-   - Name: `Upload Cert to BIG-IP`
+   - Name: `Cert Renewal Workflow`
    - Organization: `Default`
    - Inventory: `ACME_Demo`
    - Extra variables:
@@ -353,4 +353,4 @@ Follow the next steps for creating an integrated workflow. Please refer to [Ansi
 
    ![](./images/cert_renewal_workflow.png)
 
-1. Click `Save` button.
+6. Click `Save` button.
