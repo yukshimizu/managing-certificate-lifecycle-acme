@@ -52,7 +52,7 @@ vault_cert_path: "{{ domain_name }}"
 
 ## Execution environment
 ### Prepare a container image
-This demo requires creating a custom execution environment (container image). You can build your container image by using [ansible-builder](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/html/creating_and_using_execution_environments/assembly-using-builder).
+This demo requires creating a custom execution environment (container image). You can build your container image by using [ansible-builder](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/install-proc_installing_builder).
 
 First, prepare an ansible-builder installed environment. The rasiest way here is using the AAP VM for this purpose. Then, you can build the image using [execution-environment.yml](./ee-demo/execution-environment.yml).
 ```
@@ -165,7 +165,7 @@ At least the following three custom credential types need to be defined. Go to A
    ```
 4. Click `Save credential type` button.
 
-Please refer to [Ansible Doc](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/html/using_automation_execution/assembly-controller-custom-credentials) for more details.
+Please refer to [Ansible Doc](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/secure-assembly_controller_custom_credentials) for more details.
 
 ### Create credentials
 At least the following four credentails need to be defined. Go to Automation Execution > Infrastructure.
@@ -198,7 +198,7 @@ At least the following four credentails need to be defined. Go to Automation Exe
    - Name: `le_account_key`
    - Organization: `Default`
    - Credential Type: `Letsencrypt Account Key`
-   - Hashicorp Vault Token: your Account Key
+   - Letsencrypt Private Key: your Account Key
 4. Click `Save credential` button.
 
 NOTE: When creating a certificate first, you will also generate an ACME account key as a file. In order to input this key field, copy the content of the above key file **base64 encoded**.
@@ -210,10 +210,10 @@ NOTE: When creating a certificate first, you will also generate an ACME account 
    - Name: `ltm_passwd`
    - Organization: `Default`
    - Credential Type: `BIG-IP LTM Password`
-   - Hashicorp Vault Token: your admin password for BIG-IP
+   - BIG-IP LTM admin password: your admin password for BIG-IP
 4. Click `Save credential` button.
 
-Please refer to [Ansible Doc](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/html/using_automation_execution/controller-credentials) for more details.
+Please refer to [Ansible Doc](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/secure-proc_controller_create_credential) for more details.
 
 
 ### Create inventories
@@ -268,10 +268,10 @@ Go to Automation Execution > Infrastructure.
    - Source Control URL: your git repositoriy
 4. Click `Save` button
 
-Please refer to [Ansible Doc](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/html/using_automation_execution/controller-projects#proc-controller-adding-a-project) for more details.
+Please refer to [Ansible Doc](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/develop-proc_controller_adding_a_project) for more details.
 
 ### Create job templates
-Each job template is equivalent to a playbook in this repository. Repeat these steps for each template/playbook that you want to use and change the variables specific to the individual playbook. Please refer to [Ansible Doc](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/html/using_automation_execution/controller-job-templates) for more details.
+Each job template is equivalent to a playbook in this repository. Repeat these steps for each template/playbook that you want to use and change the variables specific to the individual playbook. Please refer to [Ansible Doc](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/develop-proc_controller_create_job_template#controller-create-job-template_procedure) for more details.
 
 1. Click `Templates` in the left menu.
 2. Click `Create template` button and select `Create job template`.
@@ -334,7 +334,7 @@ Once the job template is created, add the following survey and enable it.
 
 
 ### Create a workflow template
-Follow the next steps for creating an integrated workflow. Please refer to [Ansible Doc](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/html/using_automation_execution/controller-workflow-job-templates) for more details.
+Follow the next steps for creating an integrated workflow. Please refer to [Ansible Doc](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/develop-proc_controller_create_workflow_template#controller-create-workflow-template_about-this-task) for more details.
 
 #### Cert Renewal Workflow
 
