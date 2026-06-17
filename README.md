@@ -54,7 +54,7 @@ vault_cert_path: "{{ domain_name }}"
 ### Prepare a container image
 This demo requires creating a custom execution environment (container image). You can build your container image by using [ansible-builder](https://docs.redhat.com/en/documentation/red_hat_ansible_automation_platform/2.6/install-proc_installing_builder).
 
-First, prepare an ansible-builder installed environment. The rasiest way here is using the AAP VM for this purpose. Then, you can build the image using [execution-environment.yml](./ee-demo/execution-environment.yml).
+First, prepare an ansible-builder installed environment. The easiest way here is using the AAP VM for this purpose. Then, you can build the image using [execution-environment.yml](./ee-demo/execution-environment.yml).
 ```
 $ mkdir $HOME/ee-demo
 $ cd $HOME/ee-demo/
